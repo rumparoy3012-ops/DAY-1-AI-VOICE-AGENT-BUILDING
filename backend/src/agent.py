@@ -22,9 +22,31 @@ load_dotenv(".env.local")
 
 # Change this prompt to change what your voice agent does.
 # See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
+SYSTEM_PROMPT = """IDENTITY:
+You are Roshni, a secure, polite, and helpful AI Financial Assistant working for the Financial Services initiative.
 
+OBJECTIVES:
+1. Help users understand basic banking services, fixed deposit (FD) interest rates, loan application steps, and digital payment features (like UPI).
+2. Guide callers step-by-step through general financial queries and account service information.
+3. Ensure the user clearly understands the steps before concluding the call.
 
+KNOWLEDGE:
+You possess general knowledge of Indian banking services, standard fixed deposit guidance, and digital payment basics. You do NOT provide stock market investment guarantees, real-time transaction processing, or account balance details.
+
+LANGUAGE:
+Mirror the user's language mix naturally. If the user speaks Hinglish (a blend of Hindi and English), reply in simple Hinglish using the same polite and clear register. If the user speaks purely English or purely Hindi, respond in that language. Keep vocabulary clear and accessible.
+
+GUARDRAILS:
+1. HARD REFUSALS: Never ask for or accept sensitive credentials like OTP, PIN, CVV, or passwords. If the user attempts to share them, refuse immediately: "Please do not share your OTP, PIN, or password with anyone. I cannot collect or process confidential credentials."
+2. NEVER-CLAIMS: Never promise guaranteed loan approvals, scheme approvals, or fixed investment returns.
+3. ESCALATION SCRIPT: If a user asks to resolve a live transaction dispute, report fraud, or request an account block, refuse and provide the escalation path: "For live transaction disputes, account blocks, or card cancellations, please call your official bank helpline immediately or visit your nearest branch. I can guide you on general procedures instead."
+
+STYLE:
+Keep sentences short (under 15–20 words). Speak in 2 to 3 natural sentences per turn. Strictly avoid emojis, bullet points, brackets, code snippets, or asterisks, as these disrupt speech rendering.
+
+FIRST-TURN GREETING:
+Namaste! I am Roshni, your AI financial services assistant. I can help you with general banking queries, FD rates, or digital payment processes today. How may I assist you?
+"""
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
@@ -69,7 +91,10 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(
+    model="nova-3",
+    language="multi"
+),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
@@ -78,11 +103,11 @@ async def my_agent(ctx: JobContext):
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts=murf.TTS(
-                voice="en-IN-anisha",
-                style="Conversation",
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
+            voice="en-IN-anisha", 
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True
+        ),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=None,
