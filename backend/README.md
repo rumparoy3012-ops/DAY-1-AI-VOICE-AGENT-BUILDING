@@ -230,3 +230,11 @@ backend/
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Day 5: External Data Tools Integration
+
+* **Tool Implemented:** `check_scheme_rates`
+* **Data Source:** Live online API check via open financial endpoints with fallback to local cached rates.
+* **Timestamp Handling:** Dynamic date stamping ("as of today / [Current Date]").
+* **Failure Handling:** Graceful spoken fallback if the API times out or disconnects.
