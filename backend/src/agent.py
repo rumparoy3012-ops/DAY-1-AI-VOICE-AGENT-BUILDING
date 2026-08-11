@@ -18,7 +18,6 @@ from livekit.agents import (
     JobProcess,
     cli,
     tokenize,
-    room_io,
     function_tool,
     RunContext,
 )
@@ -31,31 +30,24 @@ logger = logging.getLogger("agent")
 load_dotenv(".env.local")
 
 SYSTEM_PROMPT = """IDENTITY:
-You are Roshni, a secure, polite, and helpful AI Financial Assistant working for the Financial Services initiative.
+You are Roshni, an AI Financial Assistant making an outbound notification call for Financial Services.
+
+DAY 6 OUTBOUND MANDATE:
+1. Immediately state who you are, why you are calling, and how the user can opt out or stop calls.
+2. Opening line: "Hello! This is Roshni calling from Financial Services regarding your upcoming Fixed Deposit rate offer deadline. If you wish to stop receiving these automated calls, please let me know at any time."
 
 OBJECTIVES:
-1. Help users understand basic banking services, fixed deposit (FD) interest rates, loan application steps, and financial scheme details.
-2. Use check_scheme_rates to fetch live interest rates and official eligibility criteria whenever a user asks about rates or eligibility.
-3. Always mention the timestamp or date of the data when reporting rates (e.g. "as of today" or "as of August 2026").
-4. If a tool reports an error or fallback, state clearly and gracefully that live systems are currently unreachable, and offer the last available offline estimate.
+1. Provide details on interest rates, scheme eligibility, and loan terms.
+2. Use check_scheme_rates to fetch live financial data.
+3. Respect caller privacy: ask permission before saving preferences, and refuse handling sensitive bank credentials (OTP, PIN, passwords).
 
-PRIVACY & CONSENT (HARD RULE):
-1. ALWAYS ask for explicit permission before saving any caller information (e.g., "May I save your name and FD preferences to assist you better next time?").
-2. ONLY call save_caller_info if the user explicitly agrees.
-3. NEVER store, ask for, or accept sensitive credentials like OTP, PIN, CVV, passwords, or bank account numbers.
-
-LANGUAGE & SCRIPT:
-Always write every language in its own native script.
-- Hindi -> Devanagari , never romanized (never "namaste").
-- Never say namaste say नमस्ते.
-- Same rule for all non-English languages.
-
-GUARDRAILS:
-1. HARD REFUSALS: If user attempts to share credentials: "Please do not share your OTP, PIN, or password with anyone. I cannot collect or process confidential credentials."
-2. NEVER-CLAIMS: Never promise guaranteed loan approvals or fixed investment returns.
+LANGUAGE & SCRIPT (STRICT ENFORCEMENT):
+1. Write every language in its native script.
+2. Hindi MUST be in Devanagari script (e.g. "नमस्ते", "धन्यवाद").
+3. NEVER write romanized Hindi words (never "namaste" or "dhanyavad").
 
 STYLE:
-Keep sentences short (under 15 to 20 words). Speak in 2 to 3 natural sentences per turn. Strictly avoid emojis, bullet points, brackets, code snippets, or asterisks.
+Keep responses short (under 20 words per turn). Speak in a clear, natural conversational tone.
 """
 
 
@@ -65,19 +57,12 @@ class Assistant(Agent):
 
     @function_tool
     async def lookup_caller(self, context: RunContext) -> str:
-        """Look up existing caller details in the database."""
+        """Look up existing caller details in the local database."""
         user_id = "default_user"
-        logger.info(f"Looking up caller profile for: {user_id}")
         user = get_user(user_id)
         if user and user.get("name"):
-            return (
-                f"Returning user found! "
-                f"Name: {user['name']}, "
-                f"Language preference: {user['language_preference']}, "
-                f"Schemes discussed: {user['schemes_checked']}, "
-                f"Eligibility status: {user['eligibility_status']}"
-            )
-        return "Caller profile not found in database. This is a new user."
+            return f"Returning user found: Name={user['name']}, Schemes={user['schemes_checked']}"
+        return "Caller profile not found."
 
     @function_tool
     async def save_caller_info(
@@ -88,11 +73,9 @@ class Assistant(Agent):
         schemes_checked: str, 
         eligibility_status: str
     ) -> str:
-        """Save caller details to database AFTER explicit permission is granted."""
-        user_id = "default_user"
-        logger.info(f"Saving profile info -> Name: {name}, Scheme: {schemes_checked}")
-        save_user_profile(user_id, name, language_preference, schemes_checked, eligibility_status)
-        return f"Successfully saved caller profile for {name} in the database."
+        """Save caller profile AFTER explicit permission is granted."""
+        save_user_profile("default_user", name, language_preference, schemes_checked, eligibility_status)
+        return f"Successfully saved preferences for {name}."
 
     @function_tool
     async def check_scheme_rates(
@@ -100,44 +83,24 @@ class Assistant(Agent):
         context: RunContext,
         scheme_type: str = "fixed_deposit"
     ) -> str:
-        """Fetch current interest rates and eligibility details for banking schemes or fixed deposits.
-        
-        Args:
-            scheme_type: The type of scheme to query (e.g., 'fixed_deposit', 'senior_citizen_fd', 'savings', 'home_loan').
-        """
-        logger.info(f"Fetching real-time financial data for: {scheme_type}")
+        """Fetch current interest rates and eligibility details for schemes."""
         current_date = datetime.now().strftime("%B %d, %Y")
-        
         try:
-            # Live API check: Query financial open API endpoint (3-second timeout for graceful failure handling)
             req = urllib.request.Request(
                 "https://api.exchangerate-api.com/v4/latest/INR",
                 headers={"User-Agent": "Mozilla/5.0"}
             )
             with urllib.request.urlopen(req, timeout=3) as response:
                 if response.status == 200:
-                    # Successfully fetched live data from network
                     rates = {
-                        "fixed_deposit": "6.75% per annum for 1-year tenure",
-                        "senior_citizen_fd": "7.25% per annum for senior citizens",
-                        "savings": "3.50% per annum",
-                        "home_loan": "8.40% floating rate"
+                        "fixed_deposit": "6.75% per annum",
+                        "senior_citizen_fd": "7.25% per annum",
+                        "savings": "3.50% per annum"
                     }
                     selected_rate = rates.get(scheme_type.lower(), "6.75% per annum")
-                    return (
-                        f"Data source status: LIVE ONLINE. "
-                        f"As of today ({current_date}), the current rate for {scheme_type} is {selected_rate}. "
-                        f"Minimum deposit requirement is 1,000 Rupees."
-                    )
+                    return f"As of today ({current_date}), the interest rate for {scheme_type} is {selected_rate}."
         except Exception as e:
-            logger.warning(f"Live API call failed or timed out: {e}. Switching to graceful offline fallback.")
-            # Graceful failure path out loud
-            return (
-                f"Data source status: UNREACHABLE (OFFLINE FALLBACK). "
-                f"I am unable to reach the live rate server right now. "
-                f"However, based on our last saved rates as of {current_date}, "
-                f"the estimated rate for {scheme_type} is 6.50% per annum."
-            )
+            return f"As of {current_date}, the estimated rate for {scheme_type} is 6.50% per annum."
 
 
 server = AgentServer()
@@ -150,46 +113,36 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
-@server.rtc_session(agent_name="my-agent")
+@server.rtc_session()
 async def my_agent(ctx: JobContext):
-    ctx.log_context_fields = {
-        "room": ctx.room.name,
-    }
+    ctx.log_context_fields = {"room": ctx.room.name}
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=google.LLM(
-            model="gemini-3.5-flash-lite",
-        ),
+        llm=google.LLM(model="gemini-3.5-flash"),
         tts=murf.TTS(
             voice="Anisha",
             style="Conversation",
             tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
             text_pacing=True,
         ),
-        turn_detection=None,
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,
     )
 
-    await session.start(
-        agent=Assistant(),
-        room=ctx.room,
-    )
-
+    await session.start(agent=Assistant(), room=ctx.room)
     await ctx.connect()
 
-    # Memory check on start
+    # DAY 6 OUTBOUND OPENING DISPATCH
     user_data = get_user("default_user")
-    if user_data and user_data.get("name"):
-        greeting = (
-            f"Devanagari  {user_data['name']}! Welcome back. "
-            f"How may I assist you with your banking or interest rate queries today?"
-        )
-    else:
-        greeting = "Devanagari ! I am Roshni, your AI financial services assistant. How may I assist you today?"
+    user_name = user_data.get("name") if (user_data and user_data.get("name")) else "there"
+    
+    outbound_opening = (
+        f"Hello {user_name}! This is Roshni calling from Financial Services regarding your upcoming Fixed Deposit rate offer deadline. "
+        f"If you wish to stop receiving these automated calls, please let me know at any time. How can I assist you today?"
+    )
 
-    await session.say(greeting, add_to_chat_ctx=True)
+    await session.say(outbound_opening, add_to_chat_ctx=True)
 
 
 if __name__ == "__main__":
