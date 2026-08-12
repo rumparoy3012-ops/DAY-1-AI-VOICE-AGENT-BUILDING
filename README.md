@@ -273,5 +273,13 @@ For deeper documentation on each part, see:
 ## License
 
 MIT
-#   D A Y - 1 - A I - V O I C E - A G E N T - B U I L D I N G  
+#   D A Y - 1 - A I - V O I C E - A G E N T - B U I L D I N G 
  
+ 
+
+
+## Day 7: Knowing When to Ask for Human Help
+
+* **Escalation Triggers:** Suspected fraud/unauthorized transactions or custom loan rate exception requests.
+* **Consent First:** Asks explicit permission from caller before sharing summary or generating tickets.
+* **Escalation Tool:** `create_escalation` function generates unique Reference IDs (e.g. `REF-FIN-XXXX`) and notifies support channels.
