@@ -238,3 +238,9 @@ MIT — see [LICENSE](LICENSE).
 * **Data Source:** Live online API check via open financial endpoints with fallback to local cached rates.
 * **Timestamp Handling:** Dynamic date stamping ("as of today / [Current Date]").
 * **Failure Handling:** Graceful spoken fallback if the API times out or disconnects.
+
+## Day 8: Call Analytics Dashboard
+
+* **Success Criteria:** Defined as completing a scheme interest rate lookup (`check_scheme_rates`) or escalating an inquiry (`create_escalation`).
+* **SQLite Storage:** Records `call_id`, `timestamp`, `outcome` (`SUCCESS` or `FAILED`), and `reason` in SQLite.
+* **Real-Time Analytics UI:** Next.js dashboard panel displays Total Calls, Successful Calls, Failed Calls, Success Rate, and recent call logs.

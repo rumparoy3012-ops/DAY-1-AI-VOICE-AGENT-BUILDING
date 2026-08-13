@@ -7,9 +7,6 @@ import type { AppConfig } from '@/app-config';
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
 import { WelcomeView } from '@/components/app/welcome-view';
 
-const MotionWelcomeView = motion.create(WelcomeView);
-const MotionSessionView = motion.create(AgentSessionView_01);
-
 const VIEW_MOTION_PROPS = {
   variants: {
     visible: { opacity: 1 },
@@ -18,7 +15,7 @@ const VIEW_MOTION_PROPS = {
   initial: 'hidden',
   animate: 'visible',
   exit: 'hidden',
-  transition: { duration: 0.5, ease: 'linear' },
+  transition: { duration: 0.5, ease: 'linear' as const },
 };
 
 interface ViewControllerProps {
@@ -37,17 +34,24 @@ export function ViewController({ appConfig }: ViewControllerProps) {
     <AnimatePresence mode="wait">
       {/* 1. STATE: READY (Welcome view) */}
       {!isConnected && (
-        <MotionWelcomeView
+        <motion.div
           key="welcome"
           {...VIEW_MOTION_PROPS}
-          startButtonText={appConfig.startButtonText || "Start Financial Consultation"}
-          onStartCall={start}
-        />
+        >
+          <WelcomeView
+            startButtonText={appConfig.startButtonText || "Start Financial Consultation"}
+            onStartCall={start}
+          />
+        </motion.div>
       )}
 
       {/* 2, 3 & 4. STATES: CONNECTING, LISTENING & SPEAKING */}
       {isConnected && (
-        <div key="session-wrapper" className="relative h-full w-full">
+        <motion.div
+          key="session-wrapper"
+          className="relative h-full w-full"
+          {...VIEW_MOTION_PROPS}
+        >
           {/* Top Status Banner (Fulfills Step 2 & Step 3) */}
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full px-4 py-1.5 shadow-lg backdrop-blur-md bg-background/80 border border-border">
             <span
@@ -60,9 +64,7 @@ export function ViewController({ appConfig }: ViewControllerProps) {
             </span>
           </div>
 
-          <MotionSessionView
-            key="session-view"
-            {...VIEW_MOTION_PROPS}
+          <AgentSessionView_01
             supportsChatInput={appConfig.supportsChatInput}
             supportsVideoInput={appConfig.supportsVideoInput}
             supportsScreenShare={appConfig.supportsScreenShare}
@@ -82,7 +84,7 @@ export function ViewController({ appConfig }: ViewControllerProps) {
             audioVisualizerWaveLineWidth={appConfig.audioVisualizerWaveLineWidth}
             className="fixed inset-0"
           />
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

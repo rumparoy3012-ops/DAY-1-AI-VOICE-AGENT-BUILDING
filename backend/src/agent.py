@@ -1,10 +1,12 @@
 import logging
 import sys
 import os
-import urllib.request
+import asyncio
+import aiohttp
 import json
 import random
 import string
+import uuid
 from datetime import datetime
 
 # Fix import path for database.py
@@ -25,7 +27,7 @@ from livekit.agents import (
 )
 from livekit.plugins import murf, silero, google, deepgram
 
-from database import get_user, save_user_profile
+from database import get_user, save_user_profile, record_call_outcome, get_analytics_summary
 
 logger = logging.getLogger("agent")
 
@@ -37,30 +39,23 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 SYSTEM_PROMPT = """IDENTITY:
 You are Roshni, an AI Financial Assistant working for Financial Services.
 
-DAY 7 HUMAN ESCALATION RULES:
-1. You MUST ask for human help in two specific scenarios:
-   a) Suspected Fraud or unauthorized transaction reported by the caller.
-   b) Complex manual approval or loan rate discount requests beyond automated limits.
-2. MANDATORY CONSENT BEFORE ESCALATION:
-   - Before calling create_escalation, you MUST inform the caller what details you will share (name, issue summary, urgency) and explicitly ask for their permission.
-   - Example: "I need to escalate this suspected fraud report to our human support team. May I have your permission to share your name, issue summary, and preferred language with them?"
-   - IF THEY SAY NO: Do NOT call create_escalation. Provide standard guidance without creating a ticket.
-   - IF THEY SAY YES: Execute create_escalation, obtain the Reference ID, and provide clear next steps.
-3. PRIVACY & SECURITY: NEVER include passwords, OTPs, PINs, CVVs, or bank account numbers in escalations.
+OBJECTIVES:
+1. Provide details on interest rates, scheme eligibility, and loan terms using check_scheme_rates.
+2. Escalate suspected fraud or loan rate exceptions using create_escalation AFTER getting user permission.
+3. Keep answers short (under 20 words per turn).
 
 LANGUAGE & SCRIPT (STRICT ENFORCEMENT):
 1. Always write every language in its own native script.
 2. Hindi MUST be in Devanagari script (e.g. "नमस्ते", "धन्यवाद").
 3. NEVER write romanized Hindi words (never "namaste" or "dhanyavad").
-
-STYLE:
-Keep responses short (under 20 words per turn). Speak in a clear, supportive tone.
 """
 
 
 class Assistant(Agent):
-    def __init__(self) -> None:
+    def __init__(self, session_state: dict, call_id: str) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
+        self.session_state = session_state
+        self.call_id = call_id
 
     @function_tool
     async def create_escalation(
@@ -73,33 +68,15 @@ class Assistant(Agent):
         preferred_language: str = "English",
         contact_method: str = "Outbound Call"
     ) -> str:
-        """Create a human help escalation ticket AFTER receiving explicit user consent.
-        
-        Args:
-            caller_name: Name of the caller needing support.
-            issue_category: Either 'Suspected Fraud' or 'Loan Exception'.
-            summary: Concise summary of what happened and what was checked.
-            urgency: 'low', 'medium', 'high', or 'emergency'.
-            preferred_language: Language preference for follow-up.
-            contact_method: Preferred contact method (e.g., 'Outbound Call', 'SMS').
-        """
+        """Create a human help escalation ticket AFTER receiving explicit user consent."""
         random_digits = "".join(random.choices(string.digits, k=4))
         ref_id = f"REF-FIN-{random_digits}"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        escalation_payload = {
-            "ref_id": ref_id,
-            "timestamp": timestamp,
-            "caller_name": caller_name,
-            "issue_category": issue_category,
-            "summary": summary,
-            "urgency": urgency,
-            "preferred_language": preferred_language,
-            "contact_method": contact_method,
-            "status": "OPEN"
-        }
+        self.session_state["is_success"] = True
+        self.session_state["reason"] = f"Created Escalation ({ref_id})"
 
-        logger.info(f"HUMAN ESCALATION CREATED: {json.dumps(escalation_payload, indent=2)}")
+        # Write immediately to SQLite using the 3-parameter positional call
+        record_call_outcome(self.call_id, "SUCCESS", self.session_state["reason"])
 
         if DISCORD_WEBHOOK_URL:
             try:
@@ -108,15 +85,11 @@ class Assistant(Agent):
                                f"**Caller:** {caller_name}\n"
                                f"**Category:** {issue_category}\n"
                                f"**Urgency:** {urgency.upper()}\n"
-                               f"**Summary:** {summary}\n"
-                               f"**Language:** {preferred_language} | **Follow-up:** {contact_method}"
+                               f"**Summary:** {summary}"
                 }
-                req = urllib.request.Request(
-                    DISCORD_WEBHOOK_URL,
-                    data=json.dumps(msg).encode('utf-8'),
-                    headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
-                )
-                urllib.request.urlopen(req, timeout=3)
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(DISCORD_WEBHOOK_URL, json=msg, timeout=3) as resp:
+                        pass
             except Exception as e:
                 logger.warning(f"Could not send Discord webhook: {e}")
 
@@ -126,15 +99,6 @@ class Assistant(Agent):
         )
 
     @function_tool
-    async def lookup_caller(self, context: RunContext) -> str:
-        """Look up existing caller details in the local database."""
-        user_id = "default_user"
-        user = get_user(user_id)
-        if user and user.get("name"):
-            return f"Returning user found: Name={user['name']}, Schemes={user['schemes_checked']}"
-        return "Caller profile not found."
-
-    @function_tool
     async def check_scheme_rates(
         self,
         context: RunContext,
@@ -142,22 +106,20 @@ class Assistant(Agent):
     ) -> str:
         """Fetch current interest rates and eligibility details for schemes."""
         current_date = datetime.now().strftime("%B %d, %Y")
-        try:
-            req = urllib.request.Request(
-                "https://api.exchangerate-api.com/v4/latest/INR",
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            with urllib.request.urlopen(req, timeout=3) as response:
-                if response.status == 200:
-                    rates = {
-                        "fixed_deposit": "6.75% per annum",
-                        "senior_citizen_fd": "7.25% per annum",
-                        "savings": "3.50% per annum"
-                    }
-                    selected_rate = rates.get(scheme_type.lower(), "6.75% per annum")
-                    return f"As of today ({current_date}), the interest rate for {scheme_type} is {selected_rate}."
-        except Exception as e:
-            return f"As of {current_date}, the estimated rate for {scheme_type} is 6.50% per annum."
+        
+        self.session_state["is_success"] = True
+        self.session_state["reason"] = f"Completed {scheme_type} Rate Lookup"
+
+        # Write immediately to SQLite using the 3-parameter positional call
+        record_call_outcome(self.call_id, "SUCCESS", self.session_state["reason"])
+
+        rates = {
+            "fixed_deposit": "6.75% per annum",
+            "senior_citizen_fd": "7.25% per annum",
+            "savings": "3.50% per annum"
+        }
+        selected_rate = rates.get(scheme_type.lower(), "6.75% per annum")
+        return f"As of today ({current_date}), the interest rate for {scheme_type} is {selected_rate}."
 
 
 server = AgentServer()
@@ -173,10 +135,17 @@ server.setup_fnc = prewarm
 @server.rtc_session()
 async def my_agent(ctx: JobContext):
     ctx.log_context_fields = {"room": ctx.room.name}
+    random_suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    call_id = f"CALL-{random_suffix}"
+
+    session_state = {
+        "is_success": False,
+        "reason": "Incomplete Inquiry / Early Disconnect"
+    }
 
     session = AgentSession(
         stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=google.LLM(model="gemini-3.5-flash"),
+        llm=google.LLM(model="gemini-3.6-flash"),
         tts=murf.TTS(
             voice="Anisha",
             style="Conversation",
@@ -184,21 +153,22 @@ async def my_agent(ctx: JobContext):
             text_pacing=True,
         ),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=True,
     )
 
-    await session.start(agent=Assistant(), room=ctx.room)
+    await session.start(agent=Assistant(session_state, call_id), room=ctx.room)
     await ctx.connect()
 
-    user_data = get_user("default_user")
-    user_name = user_data.get("name") if (user_data and user_data.get("name")) else "there"
-    
-    greeting = (
-        f"Hello {user_name}! I am Roshni, your AI Financial Assistant. "
-        f"How can I assist you with interest rates, loan applications, or account queries today?"
-    )
+    # On connection, immediately log initial session record to call_analytics
+    record_call_outcome(call_id, "FAILED", session_state["reason"])
 
+    greeting = "Hello! I am Roshni, your AI Financial Assistant. How may I help you with interest rates or scheme details today?"
     await session.say(greeting, add_to_chat_ctx=True)
+
+    @ctx.room.on("disconnected")
+    def on_disconnected(reason=None):
+        final_outcome = "SUCCESS" if session_state["is_success"] else "FAILED"
+        record_call_outcome(call_id, final_outcome, session_state["reason"])
+        logger.info(f"Session {call_id} disconnected. Recorded outcome: {final_outcome}")
 
 
 if __name__ == "__main__":
