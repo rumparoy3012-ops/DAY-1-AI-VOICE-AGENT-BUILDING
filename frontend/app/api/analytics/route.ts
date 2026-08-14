@@ -7,21 +7,32 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(): Promise<NextResponse> {
-  // Enforce/resolve absolute path to agent_memory.db
-  let dbPath = path.resolve(process.cwd(), '../backend/agent_memory.db');
-  if (!fs.existsSync(dbPath)) {
-    // If not found (e.g. if run from workspace root), try alternative
-    dbPath = path.resolve(process.cwd(), 'backend/agent_memory.db');
+  // Enforce/resolve absolute path to agent_memory.db with multiple fallbacks
+  const potentialPaths = [
+    path.resolve(process.cwd(), '../backend/agent_memory.db'),
+    path.resolve(process.cwd(), 'backend/agent_memory.db'),
+    path.resolve(process.cwd(), 'agent_memory.db'),
+    'C:\\Users\\User\\Desktop\\murf day 1\\murf-livekit-starter-main\\backend\\agent_memory.db',
+    path.resolve(process.cwd(), '../day4-voice-agent/agent_memory.db'),
+    path.resolve(process.cwd(), 'day4-voice-agent/agent_memory.db'),
+  ];
+
+  let dbPath = '';
+  for (const p of potentialPaths) {
+    if (fs.existsSync(p)) {
+      dbPath = p;
+      break;
+    }
   }
 
-  if (!fs.existsSync(dbPath)) {
+  if (!dbPath) {
     return NextResponse.json({
       total_calls: 0,
       successful_calls: 0,
       failed_calls: 0,
       success_rate: '0.0',
       recent_calls: [],
-      error: `Database file not found at: ${dbPath}`
+      error: `Database file not found at any of: ${potentialPaths.join(', ')}`
     }, { status: 404 });
   }
 
